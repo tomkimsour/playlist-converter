@@ -83,11 +83,7 @@ impl Drop for Prism {
     }
 }
 
-/// Writes a copy of the vendored TIDAL spec for Prism and returns its path.
-///
-/// `Included.items` is emptied (full expansion makes Prism take minutes and gigabytes) and
-/// schemas with a hex-colour `pattern` get an `example` that matches it, and
-/// bracketed query parameters (`filter[query]`), which Prism cannot find when required, become optional.
+/// Writes a copy of the vendored TIDAL spec adapted for Prism and returns its path.
 pub fn tidal_prism_spec() -> PathBuf {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/tidal.json");
     let mut spec: serde_json::Value =

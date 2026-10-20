@@ -36,10 +36,12 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<spotify::ResponseValue<T>, spotify::Error<()>>>,
 {
-    for _ in 0..MAX_ATTEMPTS {
+    for attempt in 1..=MAX_ATTEMPTS {
         match call().await {
             Ok(v) => return Ok(v.into_inner()),
-            Err(spotify::Error::UnexpectedResponse(r)) if r.status() == 429 => {
+            Err(spotify::Error::UnexpectedResponse(r))
+                if r.status() == 429 && attempt < MAX_ATTEMPTS =>
+            {
                 let secs = r
                     .headers()
                     .get("retry-after")
@@ -57,7 +59,7 @@ where
             Err(e) => return Err(e.to_string().into()),
         }
     }
-    Err(format!("still rate limited after {MAX_ATTEMPTS} attempts").into())
+    unreachable!()
 }
 
 /// Reads a non-empty environment variable.
@@ -209,7 +211,8 @@ fn tidal_items_body(
 pub async fn read(session: &Session, id: &str) -> Result<Playlist, Error> {
     match session {
         Session::Spotify(c) => {
-            let p = retry(|| c.get_playlist(id, None, None, None)).await?;
+            let p =
+                retry(|| c.get_playlist(id, None, Some("name,description,images"), None)).await?;
             let mut tracks = Vec::new();
             let mut offset = 0;
             loop {

@@ -84,7 +84,6 @@ fn parse_service(s: &str) -> Option<Service> {
 }
 
 /// Returns the id of the first candidate one of whose artists contains `artist`, ignoring case.
-// ponytail: first-result artist-substring match, add a title/duration check if mismatches show up
 fn pick(artist: &str, candidates: Candidates) -> Option<String> {
     let artist = artist.to_lowercase();
     candidates

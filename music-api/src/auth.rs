@@ -2,6 +2,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngExt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -79,28 +80,39 @@ pub async fn wait_for_code(state: &str) -> Result<String, Error> {
         let mut buf = vec![0u8; 8192];
         let mut n = 0;
         while n < buf.len() && !buf[..n].windows(2).any(|w| w == b"\r\n") {
-            let read = stream.read(&mut buf[n..]).await?;
-            if read == 0 {
-                break;
+            match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf[n..])).await {
+                Ok(Ok(read)) if read > 0 => n += read,
+                _ => break,
             }
-            n += read;
         }
         let head = String::from_utf8_lossy(&buf[..n]);
         let result = parse_callback(head.lines().next().unwrap_or(""), state);
         let (status, body) = match result {
             Ok(None) => ("404 Not Found", "Not found."),
-            _ => ("200 OK", "You can close this tab."),
+            Ok(Some(_)) => ("200 OK", "You can close this tab."),
+            Err(_) => ("400 Bad Request", "Login failed, see the terminal."),
         };
         let resp = format!(
             "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
-        stream.write_all(resp.as_bytes()).await?;
-        stream.shutdown().await?;
+        let _ = stream.write_all(resp.as_bytes()).await;
+        let _ = stream.shutdown().await;
         if let Some(code) = result? {
             return Ok(code);
         }
     }
+}
+
+/// HTTP client that sends `Authorization: Bearer <token>` on every request.
+pub fn bearer_client(token: &str) -> reqwest::Client {
+    let mut auth = reqwest::header::HeaderValue::try_from(format!("Bearer {token}")).unwrap();
+    auth.set_sensitive(true);
+    let headers = reqwest::header::HeaderMap::from_iter([(reqwest::header::AUTHORIZATION, auth)]);
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
 }
 
 #[derive(Deserialize)]

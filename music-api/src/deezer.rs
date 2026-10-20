@@ -41,7 +41,7 @@ impl std::error::Error for Error {}
 
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
-        Error::Http(e)
+        Error::Http(e.without_url())
     }
 }
 
@@ -232,7 +232,7 @@ pub struct Album {
     pub kind: Option<String>,
 }
 
-/// Stub of the other edition of an album; its artist is left out because Deezer sends it without an id.
+/// Stub of the other edition of an album.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AlbumAlternative {
     pub id: i64,
@@ -529,16 +529,26 @@ impl Deezer {
         Fut: std::future::Future<Output = Result<Page<T>>>,
     {
         let mut out = Vec::new();
+        let mut index = 0;
         loop {
             let page = f(Paging {
-                index: Some(out.len() as u64),
+                index: Some(index),
                 limit: Some(PAGE_LIMIT),
             })
             .await?;
-            let done = page.data.is_empty() || page.next.is_none();
+            let next = page
+                .next
+                .as_deref()
+                .and_then(|n| reqwest::Url::parse(n).ok())
+                .and_then(|u| {
+                    u.query_pairs()
+                        .find(|(k, _)| k == "index")
+                        .and_then(|(_, v)| v.parse::<u64>().ok())
+                });
             out.extend(page.data);
-            if done {
-                return Ok(out);
+            match next {
+                Some(i) if i > index => index = i,
+                _ => return Ok(out),
             }
         }
     }
