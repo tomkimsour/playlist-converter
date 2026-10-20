@@ -1,9 +1,14 @@
 use std::{fmt, time::Duration};
 
+use reqwest::Method;
+
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 pub const BASE_URL: &str = "https://api.deezer.com";
+pub const UPLOAD_URL: &str = "https://upload.deezer.com";
+const OAUTH_AUTH_URL: &str = "https://connect.deezer.com/oauth/auth.php";
+const OAUTH_TOKEN_URL: &str = "https://connect.deezer.com/oauth/access_token.php";
 const QUOTA_RETRIES: u32 = 6;
 const PAGE_LIMIT: u64 = 100;
 
@@ -47,6 +52,80 @@ impl From<serde_json::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+fn api_error(body: &Value) -> Option<Error> {
+    let err = body.get("error").filter(|e| e.is_object())?;
+    let text = |k: &str| err[k].as_str().unwrap_or_default().to_string();
+    Some(Error::Api {
+        code: err["code"].as_i64().unwrap_or(0),
+        kind: text("type"),
+        message: text("message"),
+    })
+}
+
+fn ids(ids: &[i64]) -> String {
+    ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn opt<'a>(k: &'a str, v: Option<&str>) -> Option<(&'a str, String)> {
+    v.map(|v| (k, v.to_string()))
+}
+
+/// Fields of a playlist update; unset fields are left unchanged.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlaylistUpdate<'a> {
+    pub title: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub public: Option<bool>,
+    pub collaborative: Option<bool>,
+}
+
+/// Fields of an update to a user's uploaded (personal) track; unset fields are left unchanged.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrackUpdate<'a> {
+    pub title: Option<&'a str>,
+    pub artist: Option<&'a str>,
+    pub album: Option<&'a str>,
+}
+
+/// Login URL of Deezer's server-side OAuth flow, e.g. perms `["basic_access", "manage_library", "offline_access"]`.
+pub fn authorize_url(app_id: &str, redirect_uri: &str, perms: &[&str], state: &str) -> String {
+    reqwest::Url::parse_with_params(
+        OAUTH_AUTH_URL,
+        [
+            ("app_id", app_id),
+            ("redirect_uri", redirect_uri),
+            ("perms", &perms.join(",")),
+            ("state", state),
+        ],
+    )
+    .expect("static url")
+    .into()
+}
+
+/// Exchanges the `code` received on the redirect for an access token.
+pub async fn exchange_code(app_id: &str, secret: &str, code: &str) -> Result<String> {
+    let body: Value = reqwest::Client::new()
+        .get(OAUTH_TOKEN_URL)
+        .query(&[
+            ("app_id", app_id),
+            ("secret", secret),
+            ("code", code),
+            ("output", "json"),
+        ])
+        .send()
+        .await?
+        .json()
+        .await?;
+    match body["access_token"].as_str() {
+        Some(t) => Ok(t.to_string()),
+        None => Err(api_error(&body).unwrap_or(Error::Api {
+            code: 300,
+            kind: "OAuthException".into(),
+            message: body.to_string(),
+        })),
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Page<T> {
@@ -464,7 +543,12 @@ impl Deezer {
         }
     }
 
-    async fn get_value(&self, path: &str, mut query: Vec<(&str, String)>) -> Result<Value> {
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        mut query: Vec<(&str, String)>,
+    ) -> Result<Value> {
         if let Some(t) = &self.token {
             query.push(("access_token", t.clone()));
         }
@@ -473,27 +557,40 @@ impl Deezer {
         loop {
             let body: Value = self
                 .http
-                .get(&url)
+                .request(method.clone(), &url)
                 .query(&query)
                 .send()
                 .await?
                 .json()
                 .await?;
-            let Some(err) = body.get("error").filter(|e| e.is_object()) else {
-                return Ok(body);
-            };
-            let code = err["code"].as_i64().unwrap_or(0);
-            if code == 4 && attempt < QUOTA_RETRIES {
-                attempt += 1;
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
+            match api_error(&body) {
+                Some(Error::Api { code: 4, .. }) if attempt < QUOTA_RETRIES => {
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Some(e) => return Err(e),
+                None => return Ok(body),
             }
-            let text = |k: &str| err[k].as_str().unwrap_or_default().to_string();
-            return Err(Error::Api {
-                code,
-                kind: text("type"),
-                message: text("message"),
-            });
+        }
+    }
+
+    async fn get_value(&self, path: &str, query: Vec<(&str, String)>) -> Result<Value> {
+        self.send(Method::GET, path, query).await
+    }
+
+    async fn act(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: Vec<(&str, String)>,
+    ) -> Result<()> {
+        match self.send(method, path, query).await? {
+            Value::Bool(true) => Ok(()),
+            other => Err(Error::Api {
+                code: 0,
+                kind: "UnexpectedResponse".into(),
+                message: other.to_string(),
+            }),
         }
     }
 
@@ -852,5 +949,193 @@ impl Deezer {
     }
     pub async fn user_tracks(&self, user: &str, p: Paging) -> Result<Page<Track>> {
         self.list(&format!("user/{user}/tracks"), vec![], p).await
+    }
+
+    pub async fn episode_bookmark_set(&self, id: i64, offset: u64) -> Result<()> {
+        let q = vec![("offset", offset.to_string())];
+        self.act(Method::POST, &format!("episode/{id}/bookmark"), q)
+            .await
+    }
+    pub async fn episode_bookmark_remove(&self, id: i64) -> Result<()> {
+        self.act(Method::DELETE, &format!("episode/{id}/bookmark"), vec![])
+            .await
+    }
+
+    pub async fn playlist_update(&self, id: i64, u: &PlaylistUpdate<'_>) -> Result<()> {
+        let q = [
+            opt("title", u.title),
+            opt("description", u.description),
+            opt("public", u.public.map(|b| b.to_string()).as_deref()),
+            opt(
+                "collaborative",
+                u.collaborative.map(|b| b.to_string()).as_deref(),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.act(Method::POST, &format!("playlist/{id}"), q).await
+    }
+    pub async fn playlist_delete(&self, id: i64) -> Result<()> {
+        self.act(Method::DELETE, &format!("playlist/{id}"), vec![])
+            .await
+    }
+    pub async fn playlist_seen(&self, id: i64) -> Result<()> {
+        self.act(Method::POST, &format!("playlist/{id}/seen"), vec![])
+            .await
+    }
+    pub async fn playlist_add_tracks(&self, id: i64, tracks: &[i64]) -> Result<()> {
+        let q = vec![("songs", ids(tracks))];
+        self.act(Method::POST, &format!("playlist/{id}/tracks"), q)
+            .await
+    }
+    pub async fn playlist_reorder_tracks(&self, id: i64, order: &[i64]) -> Result<()> {
+        let q = vec![("order", ids(order))];
+        self.act(Method::POST, &format!("playlist/{id}/tracks"), q)
+            .await
+    }
+    pub async fn playlist_remove_tracks(&self, id: i64, tracks: &[i64]) -> Result<()> {
+        let q = vec![("songs", ids(tracks))];
+        self.act(Method::DELETE, &format!("playlist/{id}/tracks"), q)
+            .await
+    }
+
+    pub async fn track_update(&self, id: i64, u: &TrackUpdate<'_>) -> Result<()> {
+        let q = [
+            opt("title", u.title),
+            opt("artist", u.artist),
+            opt("album", u.album),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.act(Method::POST, &format!("track/{id}"), q).await
+    }
+    pub async fn track_delete(&self, id: i64) -> Result<()> {
+        self.act(Method::DELETE, &format!("track/{id}"), vec![])
+            .await
+    }
+
+    pub async fn user_add_albums(&self, user: &str, albums: &[i64]) -> Result<()> {
+        let q = vec![("album_ids", ids(albums))];
+        self.act(Method::POST, &format!("user/{user}/albums"), q)
+            .await
+    }
+    pub async fn user_remove_album(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("album_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/albums"), q)
+            .await
+    }
+    pub async fn user_add_artists(&self, user: &str, artists: &[i64]) -> Result<()> {
+        let q = vec![("artist_ids", ids(artists))];
+        self.act(Method::POST, &format!("user/{user}/artists"), q)
+            .await
+    }
+    pub async fn user_remove_artist(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("artist_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/artists"), q)
+            .await
+    }
+    pub async fn user_add_playlists(&self, user: &str, playlists: &[i64]) -> Result<()> {
+        let q = vec![("playlist_ids", ids(playlists))];
+        self.act(Method::POST, &format!("user/{user}/playlists"), q)
+            .await
+    }
+    pub async fn user_remove_playlist(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("playlist_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/playlists"), q)
+            .await
+    }
+    pub async fn user_add_podcast(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("podcast_id", id.to_string())];
+        self.act(Method::POST, &format!("user/{user}/podcasts"), q)
+            .await
+    }
+    pub async fn user_remove_podcast(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("podcast_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/podcasts"), q)
+            .await
+    }
+    pub async fn user_add_radio(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("radio_id", id.to_string())];
+        self.act(Method::POST, &format!("user/{user}/radios"), q)
+            .await
+    }
+    pub async fn user_remove_radio(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("radio_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/radios"), q)
+            .await
+    }
+    pub async fn user_add_tracks(&self, user: &str, tracks: &[i64]) -> Result<()> {
+        let q = vec![("track_ids", ids(tracks))];
+        self.act(Method::POST, &format!("user/{user}/tracks"), q)
+            .await
+    }
+    pub async fn user_remove_track(&self, user: &str, id: i64) -> Result<()> {
+        let q = vec![("track_id", id.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/tracks"), q)
+            .await
+    }
+    pub async fn user_follow(&self, user: &str, target: i64) -> Result<()> {
+        let q = vec![("user_id", target.to_string())];
+        self.act(Method::POST, &format!("user/{user}/followings"), q)
+            .await
+    }
+    pub async fn user_unfollow(&self, user: &str, target: i64) -> Result<()> {
+        let q = vec![("user_id", target.to_string())];
+        self.act(Method::DELETE, &format!("user/{user}/followings"), q)
+            .await
+    }
+    pub async fn user_notify(&self, user: &str, message: &str) -> Result<()> {
+        let q = vec![("message", message.to_string())];
+        self.act(Method::POST, &format!("user/{user}/notifications"), q)
+            .await
+    }
+
+    /// Creates a playlist and returns its id.
+    pub async fn create_playlist(&self, user: &str, title: &str) -> Result<i64> {
+        let q = vec![("title", title.to_string())];
+        let v = self
+            .send(Method::POST, &format!("user/{user}/playlists"), q)
+            .await?;
+        v["id"].as_i64().ok_or_else(|| Error::Api {
+            code: 0,
+            kind: "UnexpectedResponse".into(),
+            message: v.to_string(),
+        })
+    }
+
+    /// Replaces a playlist's cover with a JPEG; needs a token whose `/infos` carries an upload token.
+    pub async fn upload_cover(&self, playlist: i64, jpeg: Vec<u8>) -> Result<()> {
+        let missing = |message: &str| Error::Api {
+            code: 300,
+            kind: "OAuthException".into(),
+            message: message.into(),
+        };
+        let token = self
+            .token
+            .clone()
+            .ok_or_else(|| missing("no access token"))?;
+        let upload_token = self
+            .infos()
+            .await?
+            .upload_token
+            .ok_or_else(|| missing("no upload token"))?;
+        let file = reqwest::multipart::Part::bytes(jpeg)
+            .file_name("cover.jpg")
+            .mime_str("image/jpeg")?;
+        let form = reqwest::multipart::Form::new()
+            .text("access_token", token)
+            .text("upload_token", upload_token)
+            .part("file", file);
+        let body: Value = self
+            .http
+            .post(format!("{UPLOAD_URL}/playlist/{playlist}"))
+            .multipart(form)
+            .send()
+            .await?
+            .json()
+            .await?;
+        api_error(&body).map_or(Ok(()), Err)
     }
 }
