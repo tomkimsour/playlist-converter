@@ -104,12 +104,20 @@ pub async fn wait_for_code(state: &str) -> Result<String, Error> {
     }
 }
 
-/// HTTP client that sends `Authorization: Bearer <token>` on every request.
+const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// HTTP client that gives up on a request after 30 seconds.
+pub fn http_client() -> reqwest::Client {
+    reqwest::Client::builder().timeout(TIMEOUT).build().unwrap()
+}
+
+/// HTTP client that sends `Authorization: Bearer <token>` on every request and gives up after 30 seconds.
 pub fn bearer_client(token: &str) -> reqwest::Client {
     let mut auth = reqwest::header::HeaderValue::try_from(format!("Bearer {token}")).unwrap();
     auth.set_sensitive(true);
     let headers = reqwest::header::HeaderMap::from_iter([(reqwest::header::AUTHORIZATION, auth)]);
     reqwest::Client::builder()
+        .timeout(TIMEOUT)
         .default_headers(headers)
         .build()
         .unwrap()

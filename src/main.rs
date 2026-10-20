@@ -83,9 +83,12 @@ fn parse_service(s: &str) -> Option<Service> {
     }
 }
 
-/// Returns the id of the first candidate one of whose artists contains `artist`, ignoring case.
+/// Returns the id of the first candidate one of whose artists contains `artist`, ignoring case; none when `artist` is empty.
 fn pick(artist: &str, candidates: Candidates) -> Option<String> {
-    let artist = artist.to_lowercase();
+    let artist = artist.trim().to_lowercase();
+    if artist.is_empty() {
+        return None;
+    }
     candidates
         .into_iter()
         .find(|(_, names)| names.iter().any(|n| n.to_lowercase().contains(&artist)))
@@ -288,6 +291,7 @@ mod tests {
         ];
         assert_eq!(pick("daft punk", c), Some("2".into()));
         assert_eq!(pick("daft punk", vec![cand("1", &["Other"])]), None);
+        assert_eq!(pick(" ", vec![cand("1", &["Anyone"])]), None);
     }
 
     fn track(isrc: Option<&str>) -> Track {

@@ -105,7 +105,7 @@ pub fn authorize_url(app_id: &str, redirect_uri: &str, perms: &[&str], state: &s
 
 /// Exchanges the `code` received on the redirect for an access token.
 pub async fn exchange_code(app_id: &str, secret: &str, code: &str) -> Result<String> {
-    let body: Value = reqwest::Client::new()
+    let body: Value = crate::auth::http_client()
         .get(OAUTH_TOKEN_URL)
         .query(&[
             ("app_id", app_id),
@@ -511,7 +511,7 @@ impl Deezer {
 
     pub fn with_base(base: impl Into<String>) -> Self {
         Deezer {
-            http: reqwest::Client::new(),
+            http: crate::auth::http_client(),
             base: base.into().trim_end_matches('/').to_string(),
             token: None,
         }

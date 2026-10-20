@@ -110,7 +110,7 @@ async fn pkce_login(
         ("client_id", client_id),
         ("code_verifier", &pkce.verifier),
     ];
-    Ok(auth::exchange(&reqwest::Client::new(), token_url, &form)
+    Ok(auth::exchange(&auth::http_client(), token_url, &form)
         .await?
         .access_token)
 }
@@ -243,7 +243,7 @@ pub async fn read(session: &Session, id: &str) -> Result<Playlist, Error> {
             }
             Ok(Playlist {
                 name: p.name.unwrap_or_default(),
-                description: p.description.unwrap_or_default(),
+                description: unescape_html(&p.description.unwrap_or_default()),
                 cover_url: p.images.into_iter().next().map(|i| i.url),
                 tracks,
             })
@@ -448,9 +448,22 @@ pub async fn find(session: &Session, t: &Track) -> Result<Option<String>, Error>
     }
 }
 
+/// Decodes the HTML entities Spotify uses in playlist descriptions.
+fn unescape_html(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&#x2F;", "/")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 /// Downloads a cover image.
 async fn fetch(url: &str) -> Result<Vec<u8>, Error> {
-    Ok(reqwest::get(url)
+    Ok(auth::http_client()
+        .get(url)
+        .send()
         .await?
         .error_for_status()?
         .bytes()
@@ -571,5 +584,14 @@ mod tests {
         assert!(create.data.attributes.description.is_none());
         let ids: Vec<String> = ["1", "2"].map(String::from).to_vec();
         assert_eq!(tidal_items_body(&ids).unwrap().data.len(), 2);
+    }
+
+    #[test]
+    fn should_decode_spotify_description_entities_once() {
+        assert_eq!(
+            unescape_html("Rock &amp; Roll&#x27;s &lt;3 &quot;AC&#x2F;DC&quot;"),
+            "Rock & Roll's <3 \"AC/DC\""
+        );
+        assert_eq!(unescape_html("&amp;lt;"), "&lt;");
     }
 }
