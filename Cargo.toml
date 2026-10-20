@@ -8,5 +8,6 @@ edition = "2024"
 
 [dependencies]
 music-api = { path = "music-api" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 reqwest = "0.13"
+serde_json = "1"
