@@ -1000,6 +1000,7 @@ version = "0.2.0"
 dependencies = [
  "music-api",
  "reqwest",
+ "serde_json",
  "tokio",
 ]
 
