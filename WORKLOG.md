@@ -32,3 +32,8 @@ Newest entries at the bottom. Times are local (CEST). Plan: [PLAN.md](PLAN.md).
 | 19:17 | T4 agent (Sonnet 5.5, high) | Started the Deezer client reads + live tests in `.worktrees/t4` | running |
 | 19:20 | main | Reviewed T3 (code, comment rules, security: state check, binds 127.0.0.1 only), reran its tests, fast-forwarded `revive-music-api` | merged `075bff0`. Note for T5: Deezer's token endpoint needs `output=json` |
 | 19:22 | user | Asked to log everything | This file. It is updated after every step from now on |
+| ~19:24 | T4 agent (Sonnet 5.5, high) | Deezer read client: transport with error-in-200 mapping and bounded quota retry (6 × 5 s), `Page`/`Paging`/`SearchQuery`, `all()` paging, 16 models, every public GET endpoint, 13 live tests | `4578953` (+1151 lines). **Live vs docs:** `user/{id}/notifications` and bare `user/{id}/recommendations` answer 600; `radio/top` returns an error without a code; `playlist/{id}/radio` returns bare `false`; album `alternative` artist has no id; several undocumented fields exist |
+| ~19:26 | main | Reviewed T4: transport, paging, comment rules | OK, except one doc comment justifies a choice (`deezer.rs:156` "because Deezer sends it without an id"), left for the T8 comment review |
+| ~19:27 | main | Merged `t4-deezer-reads` into `revive-music-api`; ran `cargo test -p music-api` | `49df13f`; 9 auth + 13 live Deezer tests pass |
+| ~19:28 | main | Created worktree `.worktrees/t5` (branch `t5-deezer-writes`) from `49df13f` | — |
+| ~19:28 | T5 agent (Sonnet 5.5, medium) | Started Deezer writes (17 POST + 12 DELETE), Deezer OAuth (`authorize_url`, `exchange_code` with `output=json`), cover upload, `add-with-options` parameter discovery, and token-less probe tests | running |
