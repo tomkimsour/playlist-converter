@@ -1,4 +1,4 @@
-use music_api::deezer::{Deezer, Error, Paging};
+use music_api::deezer::{Deezer, Error, Paging, PlaylistUpdate, TrackUpdate, authorize_url};
 
 const PLAYLIST: i64 = 11241913244;
 const ISRC: &str = "USUM71703861";
@@ -293,4 +293,149 @@ async fn should_map_errors_to_api_error() {
 
     let err = dz().user("me").await.unwrap_err();
     assert!(matches!(err, Error::Api { code: 200, .. }), "{err}");
+}
+
+fn assert_rejected<T: std::fmt::Debug>(name: &str, r: music_api::deezer::Result<T>) {
+    match r {
+        Err(Error::Api { code: 200, .. }) => {}
+        Err(Error::Api { code: 0, kind, .. }) if kind == "OAuthException" => {}
+        other => panic!("{name}: expected OAuthException, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn should_reject_every_write_when_no_token() {
+    let dz = dz();
+    let ids = [1, 2];
+    assert_rejected("episode_bookmark_set", dz.episode_bookmark_set(1, 0).await);
+    assert_rejected(
+        "episode_bookmark_remove",
+        dz.episode_bookmark_remove(1).await,
+    );
+    let update = PlaylistUpdate {
+        title: Some("t"),
+        description: Some("d"),
+        public: Some(true),
+        collaborative: Some(false),
+    };
+    assert_rejected(
+        "playlist_update",
+        dz.playlist_update(PLAYLIST, &update).await,
+    );
+    assert_rejected("playlist_delete", dz.playlist_delete(PLAYLIST).await);
+    assert_rejected("playlist_seen", dz.playlist_seen(PLAYLIST).await);
+    assert_rejected(
+        "playlist_add_tracks",
+        dz.playlist_add_tracks(PLAYLIST, &ids).await,
+    );
+    assert_rejected(
+        "playlist_reorder_tracks",
+        dz.playlist_reorder_tracks(PLAYLIST, &ids).await,
+    );
+    assert_rejected(
+        "playlist_remove_tracks",
+        dz.playlist_remove_tracks(PLAYLIST, &ids).await,
+    );
+    let track = TrackUpdate {
+        title: Some("t"),
+        artist: Some("a"),
+        album: Some("b"),
+    };
+    let err = dz.track_update(TRACK, &track).await.unwrap_err();
+    assert!(matches!(err, Error::Api { code: 500, .. }), "{err}");
+    let err = dz.track_delete(TRACK).await.unwrap_err();
+    assert!(matches!(err, Error::Api { code: 800, .. }), "{err}");
+    assert_rejected("user_add_albums", dz.user_add_albums("me", &ids).await);
+    assert_rejected("user_remove_album", dz.user_remove_album("me", 1).await);
+    assert_rejected("user_add_artists", dz.user_add_artists("me", &ids).await);
+    assert_rejected("user_remove_artist", dz.user_remove_artist("me", 1).await);
+    assert_rejected(
+        "user_add_playlists",
+        dz.user_add_playlists("me", &ids).await,
+    );
+    assert_rejected(
+        "user_remove_playlist",
+        dz.user_remove_playlist("me", 1).await,
+    );
+    assert_rejected("user_add_podcast", dz.user_add_podcast("me", 1).await);
+    assert_rejected("user_remove_podcast", dz.user_remove_podcast("me", 1).await);
+    assert_rejected("user_add_radio", dz.user_add_radio("me", 1).await);
+    assert_rejected("user_remove_radio", dz.user_remove_radio("me", 1).await);
+    assert_rejected("user_add_tracks", dz.user_add_tracks("me", &ids).await);
+    assert_rejected("user_remove_track", dz.user_remove_track("me", 1).await);
+    assert_rejected("user_follow", dz.user_follow("me", 1).await);
+    assert_rejected("user_unfollow", dz.user_unfollow("me", 1).await);
+    let err = dz.user_notify("me", "hi").await.unwrap_err();
+    assert!(matches!(err, Error::Api { code: 800, .. }), "{err}");
+    assert_rejected("create_playlist", dz.create_playlist("me", "t").await);
+    let err = dz
+        .upload_cover(PLAYLIST, vec![0xff, 0xd8])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Api { code: 300, .. }), "{err}");
+}
+
+#[tokio::test]
+async fn should_reject_every_token_only_read_when_no_token() {
+    let dz = dz();
+    let me = "me";
+    assert_rejected("user", dz.user(me).await);
+    assert_rejected("user_albums", dz.user_albums(me, p()).await);
+    assert_rejected("user_artists", dz.user_artists(me, p()).await);
+    assert_rejected("user_charts", dz.user_charts(me, p()).await);
+    assert_rejected("user_charts_tracks", dz.user_charts_tracks(me, p()).await);
+    assert_rejected("user_charts_albums", dz.user_charts_albums(me, p()).await);
+    assert_rejected(
+        "user_charts_playlists",
+        dz.user_charts_playlists(me, p()).await,
+    );
+    assert_rejected("user_charts_artists", dz.user_charts_artists(me, p()).await);
+    assert_rejected("user_flow", dz.user_flow(me, p()).await);
+    assert_rejected("user_followings", dz.user_followings(me, p()).await);
+    assert_rejected("user_followers", dz.user_followers(me, p()).await);
+    assert_rejected("user_history", dz.user_history(me, p()).await);
+    let err = dz.user_notifications(me, p()).await.unwrap_err();
+    assert!(matches!(err, Error::Api { code: 600, .. }), "{err}");
+    assert_rejected("user_permissions", dz.user_permissions(me).await);
+    assert_rejected("user_options", dz.user_options(me).await);
+    assert_rejected("user_personal_songs", dz.user_personal_songs(me, p()).await);
+    assert_rejected("user_playlists", dz.user_playlists(me, p()).await);
+    assert_rejected("user_podcasts", dz.user_podcasts(me, p()).await);
+    assert_rejected("user_radios", dz.user_radios(me, p()).await);
+    assert_rejected("rec_albums", dz.user_recommendations_albums(me, p()).await);
+    assert_rejected(
+        "rec_releases",
+        dz.user_recommendations_releases(me, p()).await,
+    );
+    assert_rejected(
+        "rec_artists",
+        dz.user_recommendations_artists(me, p()).await,
+    );
+    assert_rejected(
+        "rec_playlists",
+        dz.user_recommendations_playlists(me, p()).await,
+    );
+    assert_rejected("rec_tracks", dz.user_recommendations_tracks(me, p()).await);
+    assert_rejected("rec_radios", dz.user_recommendations_radios(me, p()).await);
+    assert_rejected("user_tracks", dz.user_tracks(me, p()).await);
+    assert_rejected("search_history", dz.search_history("a", p()).await);
+}
+
+#[test]
+fn should_encode_query_when_building_authorize_url() {
+    let url = authorize_url(
+        "123",
+        "http://127.0.0.1:8888/callback",
+        &["basic_access", "manage_library"],
+        "st ate&x",
+    );
+    let parsed = reqwest::Url::parse(&url).unwrap();
+    assert_eq!(parsed.host_str(), Some("connect.deezer.com"));
+    assert_eq!(parsed.path(), "/oauth/auth.php");
+    let q: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+    assert_eq!(q["app_id"], "123");
+    assert_eq!(q["redirect_uri"], "http://127.0.0.1:8888/callback");
+    assert_eq!(q["perms"], "basic_access,manage_library");
+    assert_eq!(q["state"], "st ate&x");
+    assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8888%2Fcallback"));
 }
