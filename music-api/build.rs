@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
 use std::{env, fs, path::Path};
 
-const METHODS: &[&str] = &["get", "put", "post", "delete", "options", "head", "patch", "trace"];
+const METHODS: &[&str] = &[
+    "get", "put", "post", "delete", "options", "head", "patch", "trace",
+];
 const SPOTIFY_DROP: &[&str] = &["upload-custom-playlist-cover"];
 const SUCCESS_STATUS: &[(&str, &str)] = &[("post_appreciations", "201"), ("post_artists", "201")];
 
@@ -24,9 +26,15 @@ fn generate(name: &str, drop: &[&str], pre_hook: Option<&str>) {
     if let Some(hook) = pre_hook {
         settings.with_pre_hook_async(syn::parse_str(hook).unwrap());
     }
-    let tokens = progenitor::Generator::new(&settings).generate_tokens(&spec).unwrap();
+    let tokens = progenitor::Generator::new(&settings)
+        .generate_tokens(&spec)
+        .unwrap();
     let code = prettyplease::unparse(&syn::parse2(tokens).unwrap());
-    fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join(format!("{name}.rs")), code).unwrap();
+    fs::write(
+        Path::new(&env::var("OUT_DIR").unwrap()).join(format!("{name}.rs")),
+        code,
+    )
+    .unwrap();
 }
 
 /// Rewrites a spec into the subset progenitor can generate.
@@ -46,7 +54,11 @@ fn normalize(spec: &mut Value, drop: &[&str]) {
             let responses = op["responses"].as_object_mut().unwrap();
             let keep = match SUCCESS_STATUS.iter().find(|(op, _)| *op == id) {
                 Some((_, status)) => Some(status.to_string()),
-                None => responses.keys().filter(|k| k.starts_with('2')).min().cloned(),
+                None => responses
+                    .keys()
+                    .filter(|k| k.starts_with('2'))
+                    .min()
+                    .cloned(),
             };
             responses.retain(|k, _| Some(k) == keep.as_ref());
             op["operationId"] = id.into();
@@ -89,7 +101,14 @@ fn snake(s: &str) -> String {
         if c.is_ascii_uppercase() {
             out.push('_');
         }
-        out.push(if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' });
+        out.push(if c.is_ascii_alphanumeric() {
+            c.to_ascii_lowercase()
+        } else {
+            '_'
+        });
     }
-    out.split('_').filter(|w| !w.is_empty()).collect::<Vec<_>>().join("_")
+    out.split('_')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
 }

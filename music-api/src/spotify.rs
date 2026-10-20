@@ -9,14 +9,28 @@ pub fn client(base: &str, token: &str) -> Client {
     let mut auth = reqwest::header::HeaderValue::try_from(format!("Bearer {token}")).unwrap();
     auth.set_sensitive(true);
     let headers = reqwest::header::HeaderMap::from_iter([(reqwest::header::AUTHORIZATION, auth)]);
-    Client::new_with_client(base, reqwest::Client::builder().default_headers(headers).build().unwrap())
+    Client::new_with_client(
+        base,
+        reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .unwrap(),
+    )
 }
 
 /// Replaces a playlist's cover image (`PUT /playlists/{playlist_id}/images`) with a JPEG.
-pub async fn upload_playlist_cover(client: &Client, playlist_id: &str, jpeg: &[u8]) -> Result<(), Error> {
+pub async fn upload_playlist_cover(
+    client: &Client,
+    playlist_id: &str,
+    jpeg: &[u8],
+) -> Result<(), Error> {
     let response = client
         .client()
-        .put(format!("{}/playlists/{}/images", client.baseurl(), encode_path(playlist_id)))
+        .put(format!(
+            "{}/playlists/{}/images",
+            client.baseurl(),
+            encode_path(playlist_id)
+        ))
         .header(reqwest::header::CONTENT_TYPE, "image/jpeg")
         .body(base64::engine::general_purpose::STANDARD.encode(jpeg))
         .send()
