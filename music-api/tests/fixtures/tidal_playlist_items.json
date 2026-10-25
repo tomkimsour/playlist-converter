@@ -1,0 +1,34 @@
+{
+  "data": [
+    {"id": "75413016", "type": "tracks", "meta": {"itemId": "a1b2c3d4-0001"}},
+    {"id": "75413017", "type": "videos", "meta": {"itemId": "a1b2c3d4-0002"}}
+  ],
+  "included": [
+    {
+      "id": "75413016",
+      "type": "tracks",
+      "attributes": {
+        "title": "One More Time",
+        "duration": "PT5M20S",
+        "explicit": false,
+        "isrc": "FRZ110002730",
+        "key": "UNKNOWN",
+        "keyScale": "UNKNOWN",
+        "mediaTags": ["LOSSLESS"],
+        "popularity": 0.81
+      }
+    },
+    {
+      "id": "75413017",
+      "type": "videos",
+      "attributes": {
+        "title": "One More Time",
+        "duration": "PT5M20S",
+        "explicit": false,
+        "isrc": "FRZ110002731",
+        "popularity": 0.4
+      }
+    }
+  ],
+  "links": {"self": "/playlists/123e4567-e89b-12d3-a456-426614174000/relationships/items?include=items"}
+}
